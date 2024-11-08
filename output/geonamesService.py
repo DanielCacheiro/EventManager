@@ -1,5 +1,22 @@
 import requests
 from math import sqrt
+import pycountry
+
+iso_languages = {}
+
+def get_language_code(country_code):
+    try:
+        # Buscar el país y obtener el idioma principal ISO 639-1
+        country = pycountry.countries.get(alpha_2=country_code)
+        if country:
+            # Obtener el idioma principal del país
+            languages = pycountry.languages.get(alpha_2=code.lower())
+            if languages:
+                return languages.alpha_2
+            else:
+                return "en"
+    except Exception as e:
+        return "en"
 
 class GeonamesServiceException(Exception):
     """Base class for exceptions in this module."""
@@ -78,6 +95,7 @@ def get_countries():
 
 
 def get_states(country,country_code):
+    language_code = get_language_code(country_code)
     url = f'http://api.geonames.org/childrenJSON?geonameId={country}&username={username}&country={country_code}&featureCode=ADM3'
     response = requests.get(url)
     if response.status_code != 200:
@@ -92,7 +110,8 @@ def get_states(country,country_code):
 
 
 def get_provinces(state_geoname,country_code):
-    url = f"http://api.geonames.org/childrenJSON?geonameId={state_geoname}&username={username}&country={country_code}&featureCode=ADM1"
+    language_code = get_language_code(country_code)
+    url = f"http://api.geonames.org/childrenJSON?geonameId={state_geoname}&username={username}&country={country_code}&featureCode=ADM1&lang={language_code}"
     response = requests.get(url)
     if response.status_code != 200:
         raise GeonamesServiceException(f"Error fetching provinces: {response.status_code}")
@@ -103,8 +122,9 @@ def get_provinces(state_geoname,country_code):
 
     return provincias
 
-def get_district(state_geoname):
-    url = f"http://api.geonames.org/childrenJSON?geonameId={state_geoname}&username={username}&featureCode=ADM4"
+def get_district(state_geoname,country_code):
+    language_code = get_language_code(country_code)
+    url = f"http://api.geonames.org/childrenJSON?geonameId={state_geoname}&username={username}&featureCode=ADM4&lang={language_code}"
     response = requests.get(url)
     if response.status_code != 200:
         raise GeonamesServiceException(f"Error fetching provinces: {response.status_code}")
@@ -116,7 +136,8 @@ def get_district(state_geoname):
     return provincias
 
 def obtener_codigos_postales(nombre_provincia, countryISO):
-    url = f"http://api.geonames.org/postalCodeSearchJSON?placename={nombre_provincia}&country={countryISO}&maxRows=500&username={username}"
+    language_code = get_language_code(countryISO)
+    url = f"http://api.geonames.org/postalCodeSearchJSON?placename={nombre_provincia}&country={countryISO}&maxRows=500&username={username}&lang={language_code}"
     response = requests.get(url)
     if response.status_code != 200:
         raise GeonamesServiceException(f"Error fetching postal codes: {response.status_code}")

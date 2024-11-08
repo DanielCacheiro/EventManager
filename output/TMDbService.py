@@ -2,7 +2,7 @@ import requests
 
 def obtener_peliculas_taquilleras():
     url = f"https://api.themoviedb.org/3/movie/upcoming?api_key={api_key}&language=es-ES&page=1"
-    response = requests.get(url, verify=False)  # Agrega verify=False
+    response = requests.get(url, verify=False, timeout=3)  # Agrega verify=False
 
     if response.status_code == 200:
         data = response.json()
@@ -18,7 +18,7 @@ def obtener_peliculas_taquilleras():
 
 def obtener_series_populares():
     url = f"https://api.themoviedb.org/3/tv/popular?api_key={api_key}&language=es-ES&page=1"
-    response = requests.get(url, verify=False)  # Agrega verify=False
+    response = requests.get(url, verify=False, timeout=3)  # Agrega verify=False
 
     if response.status_code == 200:
         data = response.json()

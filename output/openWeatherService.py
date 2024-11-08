@@ -40,10 +40,10 @@ def get_forecast_geoweather(lat,lon, stateIso3166_2,state,town):
                     alertToReturn = createAlert(data, intervalo, state, stateIso3166_2, town,"Meteo","Snow",f"{int(intervalo['snow']['3h'] / 3)} cm",data['city']['coord']['lat'],data['city']['coord']['lon'])
                     addAlert(alertToReturn, town, ciudades_alertas)
                 if intervalo['main']['temp_max'] > 37:
-                    alertToReturn = createAlert(data, intervalo, state, stateIso3166_2, town,"Meteo","High Temperature",f"{intervalo['main']['temp_max']}°C",data['city']['coord']['lat'],data['city']['coord']['lon'])
+                    alertToReturn = createAlert(data, intervalo, state, stateIso3166_2, town,"Meteo","High Temperature",f"{intervalo['main']['temp_max']} °C",data['city']['coord']['lat'],data['city']['coord']['lon'])
                     addAlert(alertToReturn, town, ciudades_alertas)
                 elif intervalo['main']['temp_min'] < 0:
-                    alertToReturn = createAlert(data, intervalo, state, stateIso3166_2, town,"Meteo","Low Temperature",f"{intervalo['main']['temp_min']}°C",data['city']['coord']['lat'],data['city']['coord']['lon'])
+                    alertToReturn = createAlert(data, intervalo, state, stateIso3166_2, town,"Meteo","Low Temperature",f"{intervalo['main']['temp_min']} °C",data['city']['coord']['lat'],data['city']['coord']['lon'])
                     addAlert(alertToReturn, town, ciudades_alertas)
                 if intervalo['weather'][0]['id'] in (201, 202, 232, 231, 221, 211, 210):
                     alertToReturn = createAlert(data, intervalo, state, stateIso3166_2, town,"Meteo","Thunderstorm",intervalo['weather']['description'],data['city']['coord']['lat'],data['city']['coord']['lon'])
@@ -82,8 +82,8 @@ def addAlert(alertToReturn, town, ciudades_alertas):
         alerta_existente = ciudades_alertas[town]
 
         # Obtener las fechas mínima y máxima actuales
-        fecha_minima = alerta_existente['fecha_minima']
-        fecha_maxima = alerta_existente['fecha_maxima']
+        fecha_minima = alerta_existente['local_start_date']
+        fecha_maxima = alerta_existente['local_end_date']
 
         # Actualizamos la fecha mínima y máxima
         alerta_existente['local_start_date'] = min(fecha_minima, alertToReturn['first_date'])

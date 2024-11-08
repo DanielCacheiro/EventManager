@@ -44,11 +44,9 @@ def processHolidayDataToInfluxDB(alert_data_list):
                     except Exception as e:
                         print(f"Error al insertar datos: {e}")
 
-def processMediaDataToInfluxDB(alert_data_list):
-    if isinstance(alert_data_list, list):
-        for alert_data in alert_data_list:
-            for alert in alert_data:
-                if not check_media_added(alert['alertSubType']):
+def processMediaDataToInfluxDB(alert):
+    if isinstance(alert, dict):
+        if not check_media_added(alert['alertSubType']):
                     point = Point("media_alerts") \
                         .tag("town", alert['town']) \
                         .tag("country", alert['country']) \
@@ -131,8 +129,34 @@ def processCulturalDataToInfluxDB(alert):
                     except Exception as e:
                         print(f"Error al insertar datos: {e}")
 
+
+def insertPredictionsDataToInfluxDB(alert):
+        point = Point("prediction_alerts") \
+            .tag("alertType", alert['alertType']) \
+            .tag("alertSubType", alert['alertSubType']) \
+            .field("description", alert['description']) \
+            .field("selection", alert['selection']) \
+            .field("probability", alert['probability'])
+        try:
+            write_api.write(bucket="Primeras pruebas", record=point, method="UPSERT")
+        except Exception as e:
+            print(f"Error al insertar datos: {e}")
+
+
+def processNewsToInfluxDB(alert):
+    point = Point("news_alerts") \
+        .tag("alertType", alert['alertType']) \
+        .tag("alertSubType", alert['alertSubType']) \
+        .field("description", alert['description']) \
+        .field("url", alert['url']) \
+        .field("time_published", alert['time_published'])
+    try:
+        write_api.write(bucket="Primeras pruebas", record=point, method="UPSERT")
+    except Exception as e:
+        print(f"Error al insertar datos: {e}")
+
 def processFestivalDataToInfluxDB(alert):
-                if not check_festival_added(alert['state'], alert['local_start_date'], alert['country'], alert['description']):
+                #if not check_festival_added(alert['state'], alert['local_start_date'], alert['country'], alert['description']):
                     point = Point("festival_alerts") \
                         .tag("town", alert['town']) \
                         .tag("country", alert['country']) \
@@ -298,10 +322,8 @@ def check_festival_added(town, start_date, country, description):
       |> filter(fn: (r) => r["_alertType"] == "Festival")
       |> filter(fn: (r) => r["town"] == "{town}")
       |> filter(fn: (r) => r["country"] == "{country}")
-      |> filter(fn: (r) => r["_field"] == "start_date")
-      |> filter(fn: (r) => r["_value"] == "{start_date}")
-      |> filter(fn: (r) => r["_field"] == "description")
-      |> filter(fn: (r) => r["_value"] == "{description}")
+      |> filter(fn: (r) => r["start_date"] == "{start_date}")
+      |> filter(fn: (r) => r["description"] == "{description}")
       |> limit(n: 1)
     '''
 

@@ -1,13 +1,25 @@
 from kafka.producer import kafka
 
-from output import openWeatherService,geonamesService,calendarificService, NASAService, ticketmasterService, TMDbService, betfairService
+import influxVisualization
+from output import instaService,openWeatherService,geonamesService,calendarificService, NASAService, ticketmasterService, TMDbService, betfairService, alphaVantageService, gdeltService
 import json
-from kafka import KafkaProducer
-from pyflink.datastream import StreamExecutionEnvironment
-import grafanaVisualization
-import opsgenie
 import time
-from datetime import timedelta,datetime
+from datetime import timedelta, datetime
+from geopy.distance import geodesic
+import random
+
+
+# Límite de llamadas y contadores
+API_LIMITS = {
+    'openweather': {'limit': 30, 'interval': 30, 'counter': 0, 'reset': datetime.now() + timedelta(minutes=1)},
+    'calendarific': {'limit': 1000, 'interval': 2592000, 'counter': 0, 'reset': datetime.now() + timedelta(days=30)},
+    'nasa': {'limit': 1000, 'interval': 3600, 'counter': 0, 'reset': datetime.now() + timedelta(hours=1)},
+    'ticketmaster': {'limit': 1000, 'interval': 86400, 'counter': 0, 'reset': datetime.now() + timedelta(days=1)},
+    'tmdb': {'limit': 20, 'interval': 5, 'counter': 0, 'reset': datetime.now() + timedelta(seconds=10)},
+    'gdelt': {'limit': 3600, 'interval': 3600, 'counter': 0, 'reset': datetime.now() + timedelta(hours=1)},
+    'alphavantage': {'limit': 5, 'interval': 60, 'counter': 0, 'reset': datetime.now() + timedelta(minutes=1)},
+    'geonames': {'limit': 2000, 'interval': 3600, 'counter': 0, 'reset': datetime.now() + timedelta(hours=1)}
+}
 
 countries = {'AD': 'Andorra', 'AE': 'United Arab Emirates', 'AF': 'Afghanistan', 'AG': 'Antigua and Barbuda',
              'AI': 'Anguilla', 'AL': 'Albania', 'AM': 'Armenia', 'AO': 'Angola', 'AR': 'Argentina',
@@ -55,380 +67,317 @@ countries = {'AD': 'Andorra', 'AE': 'United Arab Emirates', 'AF': 'Afghanistan',
              'WS': 'Samoa', 'XK': 'Kosovo', 'YE': 'Yemen', 'YT': 'Mayotte', 'ZA': 'South Africa', 'ZM': 'Zambia',
              'ZW': 'Zimbabwe'}
 
+LAST_CALLS = {
+    'media': None,
+    'betfair': None,
+    'alphavantage': None,
+    'gdelt': None,
+    'ticketmaster': None
+}
+
+def reset_counters():
+    """Restablece los contadores de las APIs según sus intervalos de tiempo."""
+    current_time = datetime.now()
+    for api, limit_data in API_LIMITS.items():
+        if current_time >= limit_data['reset']:
+            API_LIMITS[api]['counter'] = 0
+            API_LIMITS[api]['reset'] = current_time + timedelta(seconds=limit_data['interval'])
+
+
+def can_call_api(api_name):
+    """Verifica si una API se puede llamar respetando sus límites."""
+    limit_data = API_LIMITS[api_name]
+    if limit_data['counter'] < limit_data['limit']:
+        API_LIMITS[api_name]['counter'] += 1
+        return True
+    else:
+        print(f"Hemos llegado al limite de llamadas al api para {api_name}")
+        return False
+
+def should_call_daily(api_name):
+    """Determina si la API debe llamarse según el registro diario."""
+    last_call = LAST_CALLS.get(api_name)
+    if last_call is None or (datetime.now() - last_call).days >= 1:
+        LAST_CALLS[api_name] = datetime.now()
+        return True
+    return False
+
+pruebas = {'ES':'Spain','IN': 'India','PH': 'Philippines','PL': 'Poland','TH': 'Thailand','KZ': 'Kazakhstan','UZ': 'Uzbekistan','US': 'United States','IT': 'Italy','JP': 'Japan','MY': 'Malaysia','KR': 'Korea','PT':'Portugal','TR':'Turkey','GB': 'United Kingdom','CN': 'China','MX':'Mexico','FR':'France','CA': 'Canada'}
+
+def main_loop():
+    while True:
+        reset_counters()
+
+        try:
+
+            keys = list(pruebas.keys())
+            #random.shuffle(keys)
+
+            try:
+                for codeIso in keys:
+                    getAccurateMeteo(codeIso, pruebas[codeIso])
+            except Exception as e:
+                print(f"Error al obtener alertas de openweather: {e}")
+
+            try:
+                for codeIso in keys:
+                    getHolidays(codeIso, pruebas[codeIso])
+            except Exception as e:
+                print(f"Error al obtener alertas de calendarific: {e}")
+            try:
+                if can_call_api('nasa'):
+                    disaster_data = NASAService.get_natural_events()
+                    if disaster_data:
+                        print(json.dumps(disaster_data, indent=4))
+                        influxVisualization.processWeatherDataToSupabase(disaster_data)
+            except Exception as e:
+                print(f"Error al obtener datos de NASA: {e}")
+
+            if should_call_daily('alphavantage') and can_call_api('alphavantage'):
+                try:
+                    news_data = alphaVantageService.fetch_financial_news()
+                    if news_data:
+                        for article in news_data:
+                            if article['topics']:
+                                for topic in article['topics']:
+                                    if float(topic['relevance_score']) > 0.85 and article['time_published']:
+                                        alert = {
+                                            "time_published": datetime.strptime(article['time_published'], '%Y%m%dT%H%M%S').strftime('%Y-%m-%d'),
+                                            "alertType": "Financial News",
+                                            "alertSubType": topic['topic'],
+                                            "description": article['title'],
+                                            "url": article['url']
+                                        }
+                                        print(alert)
+                                        influxVisualization.processNewsToSupabase(alert)
+                except Exception as e:
+                    print(f"Error al obtener datos de AlphaVantage: {e}")
+
+            if should_call_daily('media'):
+                try:
+                    if can_call_api('tmdb'):
+                        peliculas = TMDbService.obtener_peliculas_taquilleras()
+                        for pelicula in peliculas:
+                            movie_alert = {
+                                "release_date": pelicula['release_date'],
+                                "inserted_date": datetime.today().strftime('%Y-%m-%d'),
+                                "country": '',
+                                "state": '',
+                                "town": '',
+                                "alertType": 'Movie',
+                                "alertSubType": pelicula['original_title'],
+                                "popularity": round(pelicula['popularity'])
+                            }
+                            influxVisualization.processMediaDataToSupabase(movie_alert)
+
+                    if can_call_api('tmdb'):
+                        series = TMDbService.obtener_series_populares()
+                        for serie in series:
+                            serie_alert = {
+                                "release_date": serie['first_air_date'],
+                                "inserted_date": datetime.today().strftime('%Y-%m-%d'),
+                                "country": serie['origin_country'][0],
+                                "state": '',
+                                "town": '',
+                                "alertType": 'Serie',
+                                "alertSubType": serie['name'],
+                                "popularity": round(serie['popularity'])
+                            }
+                            influxVisualization.processMediaDataToSupabase(serie_alert)
+                except Exception as e:
+                    print(f"Error al obtener datos de TMDB: {e}")
+
+            if should_call_daily('betfair'):
+                try:
+                    betting_events = betfairService.obtener_apuestas_especiales()
+                    for prediction in betting_events:
+                        influxVisualization.insertPredictionsDataToSupabase(prediction)
+                except Exception as e:
+                    print(f"Error al obtener datos de Betfair: {e}")
+
+            if should_call_daily('gdelt') and can_call_api('gdelt'):
+                try:
+                    gdelt_news = gdeltService.fetch_gdelt_news()
+                    for everyAlert in gdelt_news:
+                        print(everyAlert)
+                        influxVisualization.processNewsToSupabase(everyAlert)
+                except Exception as e:
+                    print(f"Error al obtener datos de GDELT: {e}")
+
+            if should_call_daily('ticketmaster'):
+                for codeIso, countryName in pruebas.items():
+                    for api_call, event_type, process_func in [
+                        ('ticketmaster', 'Festival', influxVisualization.processFestivalDataToSupabase),
+                        ('ticketmaster', 'Cultural', influxVisualization.processCulturalDataToSupabase),
+                        ('ticketmaster', 'Soccer', influxVisualization.processSportsDataToSupabase),
+                        ('ticketmaster', 'Sports', influxVisualization.processSportsDataToSupabase),
+                        ('ticketmaster', 'Music', influxVisualization.processMusicDataToSupabase),
+                        ('ticketmaster', 'Fashion', influxVisualization.processFashionDataToSupabase),
+                    ]:
+                        try:
+                            if can_call_api(api_call):
+                                eventos = ticketmasterService.obtener_eventos(event_type, codeIso)
+                                for evento in eventos:
+                                    alert = {
+                                        "local_start_date": evento['dates']['start']['localDate'],
+                                        "local_end_date": evento['dates']['start'].get('localDate'),
+                                        "country": codeIso,
+                                        "state": evento['_embedded']['venues'][0].get('state', {}).get('name'),
+                                        "town": evento['_embedded']['venues'][0]['city']['name'],
+                                        "alertType": event_type,
+                                        "alertSubType": evento['classifications'][0].get('genre', {}).get('name'),
+                                        "description": evento['name'].replace('"', '\\"'),
+                                        "url": evento['url']
+                                    }
+                                    process_func(alert)
+                        except Exception as e:
+                            print(f"Error al obtener datos de {event_type}: {e}")
+
+            # Espera un segundo entre cada ciclo para no saturar
+            time.sleep(0.2)
+
+        except Exception as e:
+            print(f"Error occurred: {e}")
+            print("Retrying in 5 seconds...")
+            time.sleep(1)
+
+
+
+
 
 def main():
-
-    producer = None
-    try:
-        producer = KafkaProducer(
-            bootstrap_servers='localhost:9092',  # Cambia a tu servidor de Kafka
-            value_serializer=lambda v: json.dumps(v).encode('utf-8')
-        )
-    except Exception as e:
-        print("No se puede conectar al servidor de Kafka. Esperando 2 segundos...", e)
-
-    env = StreamExecutionEnvironment.get_execution_environment()
-    env.set_parallelism(1)  # Establecer paralelismo si es necesario
-
-    betfairService.obtener_apuestas_especiales()
-
-    pruebas = {'ES': 'Spain', 'CN': 'China'}
-
-    #for codeIso, countryName in countries.items():
-    for codeIso, countryName in pruebas.items():
-
-        eventos_cultural = ticketmasterService.obtener_eventos_cultural((datetime.today() + timedelta(days=180)).strftime("%Y-%m-%dT%H:%M:%SZ"),codeIso)
-        for evento in eventos_cultural:
-                cultural_alert = {
-                    "local_start_date": evento['dates']['start']['localDate'],
-                    "local_end_date": evento['dates']['start'].get('localDate'),  # Puedes ajustarlo si hay un campo de fin
-                    "country": codeIso,
-                    "state": evento['_embedded']['venues'][0].get('state', {}).get('name'),
-                    "town": evento['_embedded']['venues'][0]['city']['name'],
-                    "alertType": "Cultural",
-                    "alertSubType": "",
-                    "description": evento['name'],
-                    "url": evento['url']
-                }
-                print(cultural_alert)
-                grafanaVisualization.processCulturalDataToInfluxDB(cultural_alert)
-
-        eventos_deportes = ticketmasterService.obtener_eventos_deportes((datetime.today() + timedelta(days=180)).strftime("%Y-%m-%dT%H:%M:%SZ"),codeIso)
-        for evento in eventos_deportes:
-                sports_alert = {
-                    "local_start_date": evento['dates']['start']['localDate'],
-                    "local_end_date": evento['dates']['start'].get('localDate'),  # Puedes ajustarlo si hay un campo de fin
-                    "country": codeIso,
-                    "state": evento['_embedded']['venues'][0].get('state', {}).get('name'),
-                    "town": evento['_embedded']['venues'][0]['city']['name'],
-                    "alertType": "Cultural",
-                    "alertSubType": "",
-                    "description": evento['name'],
-                    "url": evento['url']
-                }
-                print(sports_alert)
-                grafanaVisualization.processSportsDataToInfluxDB(sports_alert)
-
-        eventos_musica = ticketmasterService.obtener_eventos_musica((datetime.today() + timedelta(days=90)).strftime("%Y-%m-%dT%H:%M:%SZ"),codeIso)
-        for evento in eventos_musica:
-                music_alert = {
-                    "local_start_date": evento['dates']['start']['localDate'],
-                    "local_end_date": evento['dates']['start'].get('localDate'),  # Puedes ajustarlo si hay un campo de fin
-                    "country": codeIso,
-                    "state": evento['_embedded']['venues'][0].get('state', {}).get('name'),
-                    "town": evento['_embedded']['venues'][0]['city']['name'],
-                    "alertType": "Music",
-                    "alertSubType": "",
-                    "description": evento['name'],
-                    "url" : evento['url']
-                }
-                print(music_alert)
-                grafanaVisualization.processMusicDataToInfluxDB(music_alert)
-
-        eventos_miscelanea = ticketmasterService.obtener_eventos_miscelanea(
-            (datetime.today() + timedelta(days=90)).strftime("%Y-%m-%dT%H:%M:%SZ"), codeIso)
-        for evento in eventos_miscelanea:
-            alert = {
-                "local_start_date": evento['dates']['start']['localDate'],
-                "local_end_date": evento['dates']['start'].get('localDate'),  # Puedes ajustarlo si hay un campo de fin
-                "country": codeIso,
-                "state": evento['_embedded']['venues'][0].get('state', {}).get('name'),
-                "town": evento['_embedded']['venues'][0]['city']['name'],
-                "alertType": "Miscellaneous",
-                "alertSubType": "",
-                "description": evento['name'],
-                "url": evento['url']
-            }
-            print(alert)
-            grafanaVisualization.processMiscDataToInfluxDB(alert)
-
-        eventos_ferias = ticketmasterService.obtener_eventos_festivales(
-            (datetime.today() + timedelta(days=90)).strftime("%Y-%m-%dT%H:%M:%SZ"), codeIso)
-        for evento in eventos_ferias:
-            ferial_alert = {
-                "local_start_date": evento['dates']['start']['localDate'],
-                "local_end_date": evento['dates']['start'].get('localDate'),  # Puedes ajustarlo si hay un campo de fin
-                "country": codeIso,
-                "state": evento['_embedded']['venues'][0].get('state', {}).get('name'),
-                "town": evento['_embedded']['venues'][0]['city']['name'],
-                "alertType": "Festival",
-                "alertSubType": "",
-                "description": evento['name'],
-                "url": evento['url']
-            }
-            print(ferial_alert)
-            grafanaVisualization.processFestivalDataToInfluxDB(ferial_alert)
-
-        eventos_moda = ticketmasterService.obtener_eventos_moda(
-            (datetime.today() + timedelta(days=90)).strftime("%Y-%m-%dT%H:%M:%SZ"), codeIso)
-        for evento in eventos_moda:
-            alert = {
-                "local_start_date": evento['dates']['start']['localDate'],
-                "local_end_date": evento['dates']['start'].get('localDate'),  # Puedes ajustarlo si hay un campo de fin
-                "country": codeIso,
-                "state": evento['_embedded']['venues'][0].get('state', {}).get('name'),
-                "town": evento['_embedded']['venues'][0]['city']['name'],
-                "alertType": "Fashion",
-                "alertSubType": "Big Venue",
-                "description": evento['name'],
-                "url": evento['url']
-            }
-            print(alert)
-            grafanaVisualization.processFashionDataToInfluxDB(alert)
+    main_loop()
 
 
+def getAccurateMeteo(codeIso, countryName):
+    print(f"Consultando geonames para: {countryName}")
 
-    peliculas = TMDbService.obtener_peliculas_taquilleras()
-
-    for pelicula in peliculas:
-        movie_alert = {
-            "local_start_date": pelicula['release_date'],
-            "local_end_date": '',
-            "country": '',
-            "state": '',
-            "town": '',
-            "alertType": 'Movie',
-            "alertSubType": pelicula['original_title'],
-            "description": 'Popularity Index: ' + str(pelicula['popularity'])
-        }
-        print(movie_alert)
-        grafanaVisualization.processMediaDataToInfluxDB(movie_alert)
-
-
-    series = TMDbService.obtener_series_populares()
-
-    for serie in series:
-        serie_alert = {
-            "local_start_date": serie['first_air_date'],
-            "local_end_date": '',
-            "country": serie['origin_country'][0],
-            "state": '',
-            "town": '',
-            "alertType": 'Serie',
-            "alertSubType": serie['name'],
-            "description": 'Popularity Index: ' + str(serie['popularity'])
-        }
-        print(serie_alert)
-        grafanaVisualization.processMediaDataToInfluxDB(serie_alert)
-
-
-
-
-    countryNames = list(countries.values())
-
-    print("¿Qué información deseas consultar?")
-    print("1. Vacaciones")
-    print("2. Meteorología")
-    opcion = input("Introduce el número correspondiente (1 o 2): ")
-
-    if opcion == "1":
-        consulta = "vacaciones"
-    elif opcion == "2":
-        consulta = "meteorología"
-    else:
-        print("Opción no válida. Saliendo del programa.")
-        return
-
-    print("\n¿Deseas consultar un país en concreto o todos los países?")
-    print("1. Un país en concreto")
-    print("2. Todos los países")
-    pais_opcion = input("Introduce el número correspondiente (1 o 2): ")
-
-    if pais_opcion == "1":
-        # Consultar un país en específico
-        print("\nElige un país:")
-        for code, name in countries.items():
-            print(f"{code}: {name}")
-        country_code = input("Introduce el país (ejemplo: ES): ")
-
-        if country_code not in countries.keys():
-            print("País no válido. Saliendo del programa.")
-            return
-
-        if consulta == "vacaciones":
-            print(f"Consultando vacaciones para {countries[country_code]}")
-            getHolidays(country_code, countries.get(country_code))
-
-
-        elif consulta == "meteorología":
-            print(f"Consultando meteorología para {countries[country_code]}")
-            getMeteo(country_code, countries.get(country_code))
-
-    elif pais_opcion == "2":
-        if consulta == "vacaciones":
-            print("Consultando vacaciones para todos los países...")
-            for codeIso, countryName in countries.items():
-                print(f"Consultando vacaciones para {countryName}")
-                getHolidays(codeIso,countryName)
-
-        elif consulta == "meteorología":
-            print("Consultando meteorología para todos los países...")
-            for codeIso, countryName in countries.items():
-                print(f"Consultando meteorología para {countryName}")
-                getMeteo(codeIso,countryName)
-
-
-    else:
-        print("Opción no válida. Saliendo del programa.")
-        return
-
-    disaster_data = NASAService.get_natural_events()
-    if disaster_data:
-        print(json.dumps(disaster_data, indent=4))
-        grafanaVisualization.processWeatherDataToInfluxDB(disaster_data)
-
-    # Logistic regression para tener datos de probabilidades de ventas en festivos
-
-    """if countries:
-        # Obtener festivos locales si no los tenemos ya guardados
-        for country in geonamesService.get_countries() or []:
-            for state in geonamesService.get_states(country) or []:
-                holiday_data = calendarificService.get_holidays_by_state(state, country, 2025)
-                if holiday_data:
-                    print(f"Festivos en {state} del país {country} para el año 2024:")
-                    print(json.dumps(holiday_data, indent=4))
-                    producer.send('holiday_topic', holiday_data)  # Enviar datos a Kafka """
-    """
-    news_data = alphaVantageService.fetch_financial_news()
-    
-    relevant_financial_news = []
-    if news_data:
-        for article in news_data:
-            # Example of what data might look like
-            if article['topics']:
-                for topic in article['topics']:
-                    if topic['relevance_score'] > 0.85:
-                        news_item = {
-                            'title': article['title'],
-                            'url': article['url'],
-                            'summary': article.get('summary', ''),
-                            'date': article['time_published']
-                        }
-                        print(f"Sending news item to Kafka: {news_item}")
-                        relevant_financial_news.add(news_item);
-                        # Clasificar el evento
-                        category = categorization.classify_event(news_item)
-
-                        if category:
-                            # Enviar el evento a los departamentos correspondientes
-                            productor(category, news_item)
-                        else:
-                            print("No se pudo clasificar el evento.")
-
-
-    else:
-        print("No news data available")
-
-    # Obtener comentarios de Reddit
-    #Sin entrenamiento, no necesitamos predecir nada aqui
-    Zaracomments = redditService.get_reddit_news_about_brand('Zara')
-    productor('Zara_topic', Zaracomments)
-    
-    pyFlinkConsumer.process_stream(env)
-    """
-    #grafanaVisualization.processDataToInfluxDB(disaster_data)
-    #grafanaVisualization.processDataToInfluxDB(relevant_financial_news)
-    #grafanaVisualization.processDataToInfluxDB(Zaracomments)
-
-
-def getMeteo(codeIso,countryName):
-        print(f"Consultando geonames para: {countryName}")
-
-        # Obtener geonames de ese país
+    # Obtener geonames del país
+    if can_call_api('geonames'):
         geonames = geonamesService.get_geonames(countryName)
 
         # Filtrar y procesar los resultados de geonames
         for geonameid, geoname_name in geonames.items():
             if countries.get(codeIso) == geoname_name:
                 # Caso especial para Irlanda (IE): Filtrar subdivisiones que pertenezcan al Reino Unido
-                if codeIso == 'IE':
+                if codeIso == 'IE' and can_call_api('geonames'):
                     geonameid = geonamesService.get_geonames('Ireland')
-                firstDivision = geonamesService.get_states(geonameid,codeIso)
+
+                # Obtener las primeras divisiones (comunidades o estados)
+                firstDivision = geonamesService.get_states(geonameid, codeIso)
+                random.shuffle(firstDivision)
+
                 for first in firstDivision:
-                    if first['name'] == 'Catalonia':
-                        state_names = geonamesService.get_provinces(first['geonameId'],codeIso)
-                        #STATE_NAMES son las comunidades (Galicia, Andalucía...)
+                    if can_call_api('geonames'):
+                        state_names = geonamesService.get_provinces(first['geonameId'], codeIso)
+                        alreadyProcessedLocation = set()
+
+                        random.shuffle(state_names)
                         for state_name in state_names:
+                            thirdDivision = geonamesService.get_states(state_name['geonameId'], codeIso)
+                            stateIso3166_2 = state_name['adminCodes1'].get('ISO3166_2')
+                            cached_locations = []
+                            postalCodes = []
+                            toponymName = state_name['toponymName']
+                            if not thirdDivision:
                                 state = state_name['adminName1']
-                                stateIso3166_2 = state_name['adminCodes1'].get('ISO3166_2')
-                                alreadyProcessedLocation = []
-                                if state_name['name'] not in alreadyProcessedLocation:
-                                    provinces = geonamesService.get_states(state_name['geonameId'],codeIso)
-                                    if not provinces or provinces == []:
-                                        postalCodes = geonamesService.obtener_codigos_postales(state_name['name'], codeIso)
-                                        alreadyProcessedLocation.append(state_name['name'])
-                                        if postalCodes:
-                                            for postalCode in postalCodes:
-                                                weather_data = openWeatherService.get_forecast_geoweather(postalCode[0],
-                                                                                                          postalCode[1],
-                                                                                                          stateIso3166_2, state,
-                                                                                                          state_name['name'])
-                                                time.sleep(2.9)  # 1.000.000 llamadas al mes, permite unas 20 al minuto
+
+                                if state_name['toponymName'] not in alreadyProcessedLocation:
+                                    postalCodes = geonamesService.obtener_codigos_postales(state_name['name'], codeIso)
+                                    alreadyProcessedLocation.add(state_name['name'])
+                                    if not postalCodes and state_name['toponymName'] != state_name['name']:
+                                        postalCodes = geonamesService.obtener_codigos_postales(state_name['toponymName'], codeIso)
+                                        alreadyProcessedLocation.add(state_name['toponymName'])
+                                    if not postalCodes and (state_name['toponymName'] != state_name['adminName1'] and state_name['adminName1'] not in alreadyProcessedLocation):
+                                        postalCodes = geonamesService.obtener_codigos_postales(state_name['adminName1'], codeIso)
+                                        alreadyProcessedLocation.add(state_name['adminName1'])
+                                    if not postalCodes:
+                                        postalCodes = [[first['lat'], first['lng']]]
+                                if postalCodes:
+                                    random.shuffle(postalCodes)
+                                    for postalCode in postalCodes:
+                                        coords = (postalCode[0], postalCode[1])
+                                        if coords not in alreadyProcessedLocation:
+                                            alreadyProcessedLocation.add(coords)
+                                            if not is_nearby(coords, cached_locations):
+                                                time.sleep(2.9)
+                                                weather_data = openWeatherService.get_forecast_geoweather(
+                                                    postalCode[0],
+                                                    postalCode[1],
+                                                    stateIso3166_2,
+                                                    state,
+                                                    toponymName
+                                                )
                                                 if weather_data:
                                                     print(json.dumps(weather_data, indent=4))
-                                                    grafanaVisualization.processWeatherDataToInfluxDB(weather_data)
-                                    else:
-                                        for province in provinces:
-                                            if province['name'] not in alreadyProcessedLocation:
-                                                town_names = geonamesService.get_district(province['geonameId'])
-                                                if not town_names or town_names == [] :
-                                                    alreadyProcessedLocation.append(province['name'])
-                                                    postalCodes = geonamesService.obtener_codigos_postales(province['name'], codeIso)
-                                                    if postalCodes:
-                                                        for postalCode in postalCodes:
-                                                            weather_data = openWeatherService.get_forecast_geoweather(postalCode[0],
-                                                                                                                      postalCode[1],
-                                                                                                                      stateIso3166_2, state,
-                                                                                                                      province['name'])
-                                                            time.sleep(2.9)  # 1.000.000 llamadas al mes, permite unas 20 al minuto
-                                                            if weather_data:
-                                                                print(json.dumps(weather_data, indent=4))
-                                                                grafanaVisualization.processWeatherDataToInfluxDB(weather_data)
-                                                else:
-                                                    for town in town_names:
-                                                        if town['name'] not in alreadyProcessedLocation:
-                                                            postalCodes = geonamesService.obtener_codigos_postales(town['name'], codeIso)
-                                                            alreadyProcessedLocation.append(town['name'])
-                                                            if postalCodes:
-                                                                for postalCode in postalCodes:
-                                                                    weather_data = openWeatherService.get_forecast_geoweather(postalCode[0], postalCode[1],
-                                                                                                                                          stateIso3166_2,state,town['name'])
-                                                                    time.sleep(2.9)  # 1.000.000 llamadas al mes, permite unas 20 al minuto
-                                                                    if weather_data:
-                                                                        print(json.dumps(weather_data, indent=4))
-                                                                        grafanaVisualization.processWeatherDataToInfluxDB(weather_data)
-                                                                                    # productor(producer,'weather_topic', weather_data)  # Enviar datos a Kafka
+                                                    cached_locations.append(coords)
+                                                    alreadyProcessedLocation.add(toponymName)
+                                                    influxVisualization.processWeatherDataToSupabase(weather_data)
+                            else:
+                                filtered_thirdDivision = [item for item in thirdDivision if
+                                                          item.get('population', 0) > 1000]
+                                thirdDivision_reduced = random.sample(thirdDivision, min(len(filtered_thirdDivision), 20))
+                                for province in thirdDivision_reduced:
+                                    toponymName = province['toponymName']
+                                    if province['toponymName'] not in alreadyProcessedLocation:
+                                        postalCodes = [[province['lat'], first['lng']]]
+                                        alreadyProcessedLocation.add(province['toponymName'])
+                                    if postalCodes:
+                                        for postalCode in postalCodes:
+                                            coords = (postalCode[0], postalCode[1])
+                                            if coords not in alreadyProcessedLocation:
+                                                alreadyProcessedLocation.add(coords)
+                                                if not is_nearby(coords, cached_locations):
+                                                    time.sleep(2.9)
+                                                    weather_data = openWeatherService.get_forecast_geoweather(
+                                                                postalCode[0],
+                                                                postalCode[1],
+                                                                stateIso3166_2,
+                                                                state_name['adminName1'],
+                                                                toponymName
+                                                            )
+                                                    if weather_data:
+                                                        print(json.dumps(weather_data, indent=4))
+                                                        cached_locations.append(coords)
+                                                        alreadyProcessedLocation.add(toponymName)
+                                                        influxVisualization.processWeatherDataToSupabase(weather_data)
 
 
 def getHolidays(codeIso,countryName):
 
         # Obtener geonames de ese país
-        geonames = geonamesService.get_geonames(countryName)
+        if can_call_api('geonames'):
+            geonames = geonamesService.get_geonames(countryName)
 
-        # Filtrar y procesar los resultados de geonames
-        for geonameid, geoname_name in geonames.items():
-            if countries.get(codeIso) == geoname_name:
-                # Caso especial para Irlanda (IE): Filtrar subdivisiones que pertenezcan al Reino Unido
-                if codeIso == 'IE':
-                    geonameid = geonamesService.get_geonames('Ireland')
-                firstDivision = geonamesService.get_states(geonameid,codeIso)
-                for first in firstDivision:
-                    holiday_data = calendarificService.get_holidays_by_state(first['adminName1'],
-                                                                             str(first[
-                                                                                     'countryCode']).lower() + "-" + str(
-                                                                                 first['adminCodes1'].get(
-                                                                                     'ISO3166_2')).lower(),
-                                                                             codeIso,
-                                                                             2025)
-                    if holiday_data :
-                        print(json.dumps(holiday_data, indent=4))
-                        grafanaVisualization.processHolidayDataToInfluxDB(holiday_data)
-                                        # productor('holiday_topic', holiday_data)
+            # Filtrar y procesar los resultados de geonames
+            for geonameid, geoname_name in geonames.items():
+                if countries.get(codeIso) == geoname_name:
+                    # Caso especial para Irlanda (IE): Filtrar subdivisiones que pertenezcan al Reino Unido
+                    if codeIso == 'IE' and can_call_api('geonames'):
+                        geonameid = geonamesService.get_geonames('Ireland')
+                    if can_call_api('geonames'):
+                        firstDivision = geonamesService.get_states(geonameid,codeIso)
+                        random.shuffle(firstDivision)
+                        for first in firstDivision:
+                            if not influxVisualization.check_holidays_added(first['adminName1'],codeIso):
+                                if can_call_api('calendarific'):
+                                    holiday_data = calendarificService.get_holidays_by_state(first['adminName1'],
+                                                                                             str(first[
+                                                                                                     'countryCode']).lower() + "-" + str(
+                                                                                                 first['adminCodes1'].get(
+                                                                                                     'ISO3166_2')).lower(),
+                                                                                             codeIso,
+                                                                                             2025)
+                                    if holiday_data :
+                                        print(json.dumps(holiday_data, indent=4))
+                                        influxVisualization.processHolidayDataToSupabase(holiday_data)
 
 
-def productor(producer, topic, data):
-    producer.send(topic,data)
-    opsgenie.monitor_system(data)
+def is_nearby(new_coords, cached_coords, threshold_km=10):
+    for coords in cached_coords:
+        if geodesic(new_coords, coords).km < threshold_km:
+            return True
+    return False
 
 if __name__ == "__main__":
     main()

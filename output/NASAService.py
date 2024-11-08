@@ -21,7 +21,7 @@ def obtener_ciudades_afectadas(ciudades_afectadas,zone):
     return cityAdded
 
 def get_natural_events():
-    start_date = (datetime.today() - timedelta(days=14)).strftime('%Y-%m-%d')
+    start_date = (datetime.today() - timedelta(days=7)).strftime('%Y-%m-%d')
     end_date = (datetime.today() + timedelta(days=7)).strftime('%Y-%m-%d')
     url = f'https://eonet.gsfc.nasa.gov/api/v3/events?status=open&start={start_date}&end={end_date}'
     timeout = 10

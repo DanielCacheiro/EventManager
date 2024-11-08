@@ -84,7 +84,23 @@ def obtener_eventos_cultural(end_date,countryiso):
 
 def obtener_eventos_deportes(end_date, countryiso):
     conn = http.client.HTTPSConnection("app.ticketmaster.com")
-    endpoint = f"/discovery/v2/events.json?&apikey={api_key_eventbrite}&segmentName=Sports&sort=relevance,desc&size=100&countryCode={countryiso}"
+    endpoint = f"/discovery/v2/events.json?&apikey={api_key_eventbrite}&segmentName=Sports&sort=relevance,desc&endDateTime={end_date}&size=100&countryCode={countryiso}"
+
+    conn.request("GET", endpoint)
+    response = conn.getresponse()
+    data = response.read()
+    conn.close()
+
+    if response.status == 200:
+        data = json.loads(data)
+        eventos = data.get('_embedded', {}).get('events', [])
+        return eventos
+    else:
+        raise Exception(f"Error al obtener eventos de Eventbrite: {response.status}")
+
+def obtener_eventos_futbol(end_date, countryiso):
+    conn = http.client.HTTPSConnection("app.ticketmaster.com")
+    endpoint = f"/discovery/v2/events.json?&apikey={api_key_eventbrite}&classificationName=football&sort=relevance,desc&endDateTime={end_date}&size=100&countryCode={countryiso}"
 
     conn.request("GET", endpoint)
     response = conn.getresponse()
