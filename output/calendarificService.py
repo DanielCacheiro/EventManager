@@ -63,6 +63,6 @@ def addAlert(alertToReturn, province_code, provincias_alertas):
     provincias_alertas[province_code].append(alertToReturn)
 
 # Ejemplo de uso
-calendarific_api_key = '6yKn3XVfIfcuhNT5fQw6d8pADJ7f71aM'
+calendarific_api_key = 'calendarific'
 country_code = 'ES'  # España
 year = 2024
