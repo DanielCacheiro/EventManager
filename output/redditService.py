@@ -4,7 +4,7 @@ import json
 
 # Configurar Reddit API
 reddit = praw.Reddit(client_id='YKvPVAkruEtrsNVJ1z__MA',
-                     client_secret='PUamYGsjZE0ATPnQUGZSAgFFsrvKdQ',
+                     client_secret='reddit',
                      user_agent='Revisador de noticias')
 
 # Inicializar los pipelines
