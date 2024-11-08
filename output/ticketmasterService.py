@@ -114,4 +114,4 @@ def obtener_eventos_futbol(end_date, countryiso):
     else:
         raise Exception(f"Error al obtener eventos de Eventbrite: {response.status}")
 
-api_key_eventbrite = 'KGd3tkLAZaZ6ALEletQLHgQKzUIJkD07'
+api_key_eventbrite = 'ticketmaster'
