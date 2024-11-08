@@ -1,7 +1,7 @@
 from kafka.producer import kafka
 
 import influxVisualization
-from output import instaService,openWeatherService,geonamesService,calendarificService, NASAService, ticketmasterService, TMDbService, betfairService, alphaVantageService, gdeltService
+from output import openWeatherService,geonamesService,calendarificService, NASAService, ticketmasterService, TMDbService, betfairService, alphaVantageService, gdeltService
 import json
 import time
 from datetime import timedelta, datetime
