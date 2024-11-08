@@ -87,4 +87,4 @@ def haversine(coord1, old_lat,old_lon):
     return R * c
 
 # Ejemplo de uso
-nasa_api_key = 'nz8puv01LFCDuIfag0czEf7VlOQ9ipePYwCYHaXY'
+nasa_api_key = 'NASA'
