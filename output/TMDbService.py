@@ -32,4 +32,4 @@ def obtener_series_populares():
     else:
         raise Exception(f"Error en la solicitud: {response.status_code}")
 
-api_key='41ec89427fd8a7ed5d11dc44ba3e5f6d'
+api_key='TMDb'
