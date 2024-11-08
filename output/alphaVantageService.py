@@ -3,7 +3,7 @@ import time
 import requests
 
 # Your Alpha Vantage API key
-ALPHA_VANTAGE_API_KEY = 'V6U5M5YG95AK3DQP'
+ALPHA_VANTAGE_API_KEY = 'av'
 
 
 # Alpha Vantage news endpoint
