@@ -6,7 +6,7 @@ import requests
 
 # Configuración de Supabase
 url = "https://ghwbaagimbnzyfiloues.supabase.co"  # Cambia esto por tu URL de Supabase
-key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imdod2JhYWdpbWJuenlmaWxvdWVzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MzA3NDUxNzgsImV4cCI6MjA0NjMyMTE3OH0.4JR8qEUCy2a6ppWaSKuozf2xK9C0wSGlqzGO07_1qxo"  # Cambia esto por tu clave anónima de Supabase
+key = "supabase_key"  # Cambia esto por tu clave anónima de Supabase
 supabase: Client = create_client(url, key)
 
 # Montar el adaptador en la sesión HTTP
